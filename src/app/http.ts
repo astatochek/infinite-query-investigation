@@ -9,8 +9,10 @@ export class Http {
   private trees = INDICES.map((index) => tree(5, 5, Math.floor(index / 4)));
 
   search(index: number, keyword: string): Observable<string[]> {
+    console.log('==> [REQ]', { index, keyword });
     const res: string[] = [];
     search(this.trees[index], keyword.toLowerCase(), res);
+    console.log('<== [RES]', res);
     return of(res).pipe(delay(Math.random() * 1000));
   }
 }
