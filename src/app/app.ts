@@ -44,8 +44,10 @@ function onViewPort(
   selector: 'app-root',
   template: `
     <div #top class="h-4 w-full bg-red-300 text-black"></div>
-    @for (elem of query.data(); track $index) {
-      <div #top class="h-4 my-1 w-full bg-gray-300 text-black">{{ elem }}</div>
+    @for (elem of query.data(); track elem.path + elem.index) {
+      <div #top class="h-4 my-1 w-full bg-gray-300 text-black">
+        {{ elem.path }}
+      </div>
     }
     <div #bot class="h-4 w-full bg-red-300 text-black"></div>
   `,
@@ -56,10 +58,15 @@ export class App {
   top = viewChild.required<ElementRef>('top');
   bot = viewChild.required<ElementRef>('bot');
 
-  query = useInfiniteQuery<string[], number>({
+  query = useInfiniteQuery<{ path: string; index: number }[], number>({
     initialPageParam: INDICES[0],
     maxPages: 3,
-    query: ({ pageParam }) => this.http.search(pageParam, 'C'),
+    query: ({ pageParam }) =>
+      this.http
+        .search(pageParam, 'C')
+        .pipe(
+          map((matches) => matches.map((path) => ({ path, index: pageParam }))),
+        ),
     getNextPageParam: (prevPageParam) => {
       const index = INDICES.indexOf(prevPageParam);
       const next = INDICES[index + 1];
