@@ -23,7 +23,12 @@ function onViewPort(
   function see(): boolean {
     const windowHeight = window.innerHeight;
     const boundedRect = ref().nativeElement.getBoundingClientRect();
-    return boundedRect.top >= 0 && boundedRect.bottom <= windowHeight;
+    const threshold = 1;
+    // console.log({ windowHeight, boundedRect });
+    return (
+      boundedRect.top >= 0 - threshold &&
+      boundedRect.bottom <= windowHeight + threshold
+    );
   }
 
   merge(scrolled, refChanged)
@@ -38,11 +43,11 @@ function onViewPort(
 @Component({
   selector: 'app-root',
   template: `
-    <div #top class="h-4 w-full bg-gray-300 text-black"></div>
+    <div #top class="h-4 w-full bg-red-300 text-black"></div>
     @for (elem of query.data(); track $index) {
       <div #top class="h-4 my-1 w-full bg-gray-300 text-black">{{ elem }}</div>
     }
-    <div #bot class="h-4 w-full bg-gray-300 text-black"></div>
+    <div #bot class="h-4 w-full bg-red-300 text-black"></div>
   `,
 })
 export class App {
@@ -57,22 +62,28 @@ export class App {
     query: ({ pageParam }) => this.http.search(pageParam, 'C'),
     getNextPageParam: (prevPageParam) => {
       const index = INDICES.indexOf(prevPageParam);
-      return INDICES[index + 1];
+      const next = INDICES[index + 1];
+      console.log('getNextPageParam', { prevPageParam, next });
+      return next;
     },
     getPrevPageParam: (prevPageParam) => {
       const index = INDICES.indexOf(prevPageParam);
-      return INDICES[index - 1];
+      const next = INDICES[index - 1];
+      console.log('getPrevPageParam', { prevPageParam, next });
+      return next;
     },
   });
 
   constructor() {
-    onViewPort(this.top, () => {
-      if (this.query.hasPreviousPage()) {
+    onViewPort(this.top, (isInViewPort) => {
+      console.log('top', isInViewPort);
+      if (isInViewPort && this.query.hasPreviousPage()) {
         this.query.hasPreviousPage();
       }
     });
-    onViewPort(this.bot, () => {
-      if (this.query.hasNextPage()) {
+    onViewPort(this.bot, (isInViewPort) => {
+      console.log('bot', isInViewPort);
+      if (isInViewPort && this.query.hasNextPage()) {
         this.query.fetchNextPage();
       }
     });
