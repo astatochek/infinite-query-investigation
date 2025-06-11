@@ -11,34 +11,49 @@ import {
 } from '@angular/core';
 import { Http, INDICES } from './http';
 import { distinctUntilChanged, fromEvent, map, merge, Observable } from 'rxjs';
-import { takeUntilDestroyed, toObservable } from '@angular/core/rxjs-interop';
+import {
+  takeUntilDestroyed,
+  toObservable,
+  toSignal,
+} from '@angular/core/rxjs-interop';
 
-function onViewPort(
-  ref: Signal<ElementRef>,
-  cb: (isInViewPort: boolean) => void,
-): void {
-  const scrolled = fromEvent(window, 'scroll');
-  const refChanged = toObservable(ref);
-
-  function see(): boolean {
-    const windowHeight = window.innerHeight;
-    const boundedRect = ref().nativeElement.getBoundingClientRect();
-    const threshold = 1;
-    // console.log({ windowHeight, boundedRect });
-    return (
-      boundedRect.top >= 0 - threshold &&
-      boundedRect.bottom <= windowHeight + threshold
-    );
-  }
-
-  merge(scrolled, refChanged)
-    .pipe(
-      map(() => see()),
-      distinctUntilChanged(),
-      takeUntilDestroyed(),
-    )
-    .subscribe(cb);
+function isVisible(element: Element): boolean {
+  const windowHeight = window.innerHeight;
+  const boundedRect = element.getBoundingClientRect();
+  const threshold = 1;
+  // console.log({ windowHeight, boundedRect });
+  return (
+    boundedRect.top >= 0 - threshold &&
+    boundedRect.bottom <= windowHeight + threshold
+  );
 }
+
+// function onViewPort(
+//   ref: Signal<ElementRef>,
+//   cb: (isInViewPort: boolean) => void,
+// ): void {
+//   const scrolled = fromEvent(window, 'scroll');
+//   const refChanged = toObservable(ref);
+//
+//   function see(): boolean {
+//     const windowHeight = window.innerHeight;
+//     const boundedRect = ref().nativeElement.getBoundingClientRect();
+//     const threshold = 1;
+//     // console.log({ windowHeight, boundedRect });
+//     return (
+//       boundedRect.top >= 0 - threshold &&
+//       boundedRect.bottom <= windowHeight + threshold
+//     );
+//   }
+//
+//   merge(scrolled, refChanged)
+//     .pipe(
+//       map(() => see()),
+//       distinctUntilChanged(),
+//       takeUntilDestroyed(),
+//     )
+//     .subscribe(cb);
+// }
 
 @Component({
   selector: 'app-root',
@@ -57,6 +72,8 @@ export class App {
 
   top = viewChild.required<ElementRef>('top');
   bot = viewChild.required<ElementRef>('bot');
+
+  onScroll = toSignal(fromEvent(window, 'scroll'), { equal: () => false });
 
   query = useInfiniteQuery<{ path: string; index: number }[], number>({
     initialPageParam: INDICES[0],
@@ -82,18 +99,36 @@ export class App {
   });
 
   constructor() {
-    onViewPort(this.top, (isInViewPort) => {
-      console.log('top', isInViewPort);
-      if (isInViewPort && this.query.hasPreviousPage()) {
-        this.query.hasPreviousPage();
-      }
-    });
-    onViewPort(this.bot, (isInViewPort) => {
-      console.log('bot', isInViewPort);
-      if (isInViewPort && this.query.hasNextPage()) {
+    effect(() => {
+      const top = this.top().nativeElement;
+      const bot = this.bot().nativeElement;
+
+      // deps
+      // this.query.data();
+      this.onScroll();
+
+      // if (isVisible(top) && this.query.hasPreviousPage()) {
+      //   this.query.fetchPreviousPage();
+      //   return;
+      // }
+
+      if (isVisible(bot) && this.query.hasNextPage()) {
         this.query.fetchNextPage();
+        return;
       }
     });
+    // onViewPort(this.top, (isInViewPort) => {
+    //   console.log('top', isInViewPort);
+    //   if (isInViewPort && this.query.hasPreviousPage()) {
+    //     this.query.hasPreviousPage();
+    //   }
+    // });
+    // onViewPort(this.bot, (isInViewPort) => {
+    //   console.log('bot', isInViewPort);
+    //   if (isInViewPort && this.query.hasNextPage()) {
+    //     this.query.fetchNextPage();
+    //   }
+    // });
   }
 
   onVisible(v: boolean) {
@@ -131,6 +166,22 @@ function useInfiniteQuery<
     initialPageParam,
   );
   let direction: 1 | -1 = 1;
+  const fetchNextPage = () => {
+    direction = 1;
+    const param = pageParam();
+    const last = cache().at(-1)?.pageParam;
+    if (param !== END && last !== undefined) {
+      pageParam.set(getNextPageParam(param === START ? last : param) ?? END);
+    }
+  };
+  const fetchPreviousPage = () => {
+    direction = -1;
+    const param = pageParam();
+    const first = cache().at(0)?.pageParam;
+    if (param !== START && first !== undefined) {
+      pageParam.set(getPrevPageParam(param === END ? first : param) ?? START);
+    }
+  };
 
   const destroyRef = inject(DestroyRef);
 
@@ -142,6 +193,11 @@ function useInfiniteQuery<
       const sub = query({ pageParam: param })
         .pipe(takeUntilDestroyed(destroyRef))
         .subscribe((res) => {
+          if (res.length === 0) {
+            if (dir === 1) fetchNextPage();
+            if (dir === -1) fetchPreviousPage();
+            return;
+          }
           isLoading.set(false);
           if (dir === 1) {
             cache.update((entries) => {
@@ -162,6 +218,8 @@ function useInfiniteQuery<
           }
         });
       onCleanup(() => sub.unsubscribe());
+    } else {
+      isLoading.set(false);
     }
   });
 
@@ -171,22 +229,8 @@ function useInfiniteQuery<
     isFetchingNextPage: computed(() => isLoading() && direction === 1),
     isFetchingPreviousPage: computed(() => isLoading() && direction === -1),
     data,
-    fetchNextPage: () => {
-      direction = 1;
-      const param = pageParam();
-      const last = cache().at(-1)?.pageParam;
-      if (param !== END && last !== undefined) {
-        pageParam.set(getNextPageParam(param === START ? last : param) ?? END);
-      }
-    },
-    fetchPreviousPage: () => {
-      direction = -1;
-      const param = pageParam();
-      const first = cache().at(0)?.pageParam;
-      if (param !== START && first !== undefined) {
-        pageParam.set(getPrevPageParam(param === END ? first : param) ?? START);
-      }
-    },
+    fetchNextPage,
+    fetchPreviousPage,
     hasNextPage: computed(() => pageParam() !== END),
     hasPreviousPage: computed(() => pageParam() !== START),
   };
