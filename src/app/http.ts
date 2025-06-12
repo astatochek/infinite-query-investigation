@@ -6,7 +6,7 @@ export const INDICES = Array.from(Array(count).keys());
 
 @Injectable({ providedIn: 'root' })
 export class Http {
-  private trees = INDICES.map((index) => tree(5, 5, Math.floor(index / 4)));
+  private trees = INDICES.map((index) => tree(5, 5, index % 4));
 
   search(index: number, keyword: string): Observable<string[]> {
     console.log('==> [REQ]', { index, keyword });

@@ -5,17 +5,13 @@ import {
   effect,
   ElementRef,
   inject,
-  Signal,
   signal,
+  untracked,
   viewChild,
 } from '@angular/core';
 import { Http, INDICES } from './http';
-import { distinctUntilChanged, fromEvent, map, merge, Observable } from 'rxjs';
-import {
-  takeUntilDestroyed,
-  toObservable,
-  toSignal,
-} from '@angular/core/rxjs-interop';
+import { fromEvent, map, Observable } from 'rxjs';
+import { takeUntilDestroyed, toSignal } from '@angular/core/rxjs-interop';
 
 function isVisible(element: Element): boolean {
   const windowHeight = window.innerHeight;
@@ -28,40 +24,12 @@ function isVisible(element: Element): boolean {
   );
 }
 
-// function onViewPort(
-//   ref: Signal<ElementRef>,
-//   cb: (isInViewPort: boolean) => void,
-// ): void {
-//   const scrolled = fromEvent(window, 'scroll');
-//   const refChanged = toObservable(ref);
-//
-//   function see(): boolean {
-//     const windowHeight = window.innerHeight;
-//     const boundedRect = ref().nativeElement.getBoundingClientRect();
-//     const threshold = 1;
-//     // console.log({ windowHeight, boundedRect });
-//     return (
-//       boundedRect.top >= 0 - threshold &&
-//       boundedRect.bottom <= windowHeight + threshold
-//     );
-//   }
-//
-//   merge(scrolled, refChanged)
-//     .pipe(
-//       map(() => see()),
-//       distinctUntilChanged(),
-//       takeUntilDestroyed(),
-//     )
-//     .subscribe(cb);
-// }
-
 @Component({
   selector: 'app-root',
   template: `
-    <div #top class="h-4 w-full bg-red-300 text-black"></div>
     @for (elem of query.data(); track elem.path + elem.index) {
       <div #top class="h-4 my-1 w-full bg-gray-300 text-black">
-        {{ elem.path }}
+        {{ elem.index }}: {{ elem.path }}
       </div>
     }
     <div #bot class="h-4 w-full bg-red-300 text-black"></div>
@@ -70,15 +38,13 @@ function isVisible(element: Element): boolean {
 export class App {
   http = inject(Http);
 
-  top = viewChild.required<ElementRef>('top');
   bot = viewChild.required<ElementRef>('bot');
 
   onScroll = toSignal(fromEvent(window, 'scroll'), { equal: () => false });
 
-  query = useInfiniteQuery<{ path: string; index: number }[], number>({
+  query = useInfiniteQuery({
     initialPageParam: INDICES[0],
-    maxPages: 3,
-    query: ({ pageParam }) =>
+    queryFn: ({ pageParam }) =>
       this.http
         .search(pageParam, 'C')
         .pipe(
@@ -90,17 +56,10 @@ export class App {
       console.log('getNextPageParam', { prevPageParam, next });
       return next;
     },
-    getPrevPageParam: (prevPageParam) => {
-      const index = INDICES.indexOf(prevPageParam);
-      const next = INDICES[index - 1];
-      console.log('getPrevPageParam', { prevPageParam, next });
-      return next;
-    },
   });
 
   constructor() {
     effect(() => {
-      const top = this.top().nativeElement;
       const bot = this.bot().nativeElement;
 
       // deps
@@ -130,92 +89,51 @@ export class App {
     //   }
     // });
   }
-
-  onVisible(v: boolean) {
-    console.log(v);
-  }
 }
 
-function useInfiniteQuery<
-  TPage extends any[],
-  TPageParam extends NonNullable<any>,
->({
-  query,
+function useInfiniteQuery<TData, TPageParam extends NonNullable<any>>({
+  queryFn: query,
   initialPageParam,
-  maxPages,
   getNextPageParam,
-  getPrevPageParam,
 }: {
-  query: (args: { pageParam: NoInfer<TPageParam> }) => Observable<TPage>;
+  queryFn: (args: { pageParam: NoInfer<TPageParam> }) => Observable<TData[]>;
   initialPageParam: TPageParam;
-  maxPages: number;
   getNextPageParam: (
     prevPageParam: NoInfer<TPageParam>,
   ) => NoInfer<TPageParam> | undefined;
-  getPrevPageParam: (
-    prevPageParam: NoInfer<TPageParam>,
-  ) => NoInfer<TPageParam> | undefined;
 }) {
-  const START = Symbol('START');
   const END = Symbol('END');
   const isError = signal(false);
   const isLoading = signal(true);
-  const cache = signal<{ pageParam: TPageParam; page: TPage }[]>([]);
-  const data = computed(() => cache().flatMap((e) => e.page));
-  const pageParam = signal<TPageParam | typeof START | typeof END>(
-    initialPageParam,
-  );
-  let direction: 1 | -1 = 1;
-  const fetchNextPage = () => {
-    direction = 1;
-    const param = pageParam();
-    const last = cache().at(-1)?.pageParam;
-    if (param !== END && last !== undefined) {
-      pageParam.set(getNextPageParam(param === START ? last : param) ?? END);
+  const data = signal<TData[]>([], { equal: () => false });
+  const pageParam = signal<TPageParam | typeof END>(initialPageParam);
+  const fetchNextPage = (ignoreLoading: boolean) => {
+    if (!ignoreLoading && untracked(isLoading)) {
+      return;
+    }
+    const param = untracked(pageParam);
+    if (param !== END) {
+      pageParam.set(getNextPageParam(param) ?? END);
     }
   };
-  const fetchPreviousPage = () => {
-    direction = -1;
-    const param = pageParam();
-    const first = cache().at(0)?.pageParam;
-    if (param !== START && first !== undefined) {
-      pageParam.set(getPrevPageParam(param === END ? first : param) ?? START);
-    }
-  };
-
   const destroyRef = inject(DestroyRef);
 
   effect((onCleanup) => {
     const param = pageParam();
-    const dir = direction;
-    if (param !== END && param !== START) {
+    if (param !== END) {
       isLoading.set(true);
       const sub = query({ pageParam: param })
         .pipe(takeUntilDestroyed(destroyRef))
         .subscribe((res) => {
           if (res.length === 0) {
-            if (dir === 1) fetchNextPage();
-            if (dir === -1) fetchPreviousPage();
+            fetchNextPage(true);
             return;
           }
           isLoading.set(false);
-          if (dir === 1) {
-            cache.update((entries) => {
-              entries.push({ pageParam: param, page: res });
-              if (entries.length > maxPages) {
-                entries.shift();
-              }
-              return [...entries];
-            });
-          } else if (dir === -1) {
-            cache.update((entries) => {
-              entries.unshift({ pageParam: param, page: res });
-              if (entries.length > maxPages) {
-                entries.pop();
-              }
-              return [...entries];
-            });
-          }
+          data.update((prev) => {
+            prev.push(...res);
+            return prev;
+          });
         });
       onCleanup(() => sub.unsubscribe());
     } else {
@@ -226,12 +144,9 @@ function useInfiniteQuery<
   return {
     isError: isError.asReadonly(),
     isFetching: isLoading.asReadonly(),
-    isFetchingNextPage: computed(() => isLoading() && direction === 1),
-    isFetchingPreviousPage: computed(() => isLoading() && direction === -1),
-    data,
-    fetchNextPage,
-    fetchPreviousPage,
+    isFetchingNextPage: computed(() => isLoading()),
+    data: data.asReadonly(),
+    fetchNextPage: () => fetchNextPage(false),
     hasNextPage: computed(() => pageParam() !== END),
-    hasPreviousPage: computed(() => pageParam() !== START),
   };
 }
